@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useSocket } from '../hooks/useSocket'
 import { generateName } from '../utils/nameGenerator'
 import { useTheme } from '../App'
-import socket from '../socket'
+import socket, { SOCKET_EVENT_TIMEOUT_MS } from '../socket'
 
 const AVATAR_COLORS = [
   '#2D5BE3', '#E85A4F', '#50B86C',
@@ -205,6 +205,7 @@ function Room() {
   const typingTimeoutRef = useRef(null)
   const textareaRef = useRef(null)
   const bottomRef = useRef(null)
+  const roomJoinTimeoutRef = useRef(null)
 
   useEffect(() => {
     let active = true
@@ -213,16 +214,26 @@ function Room() {
       socket.disconnect()
     }
 
-    const handleConnectError = () => {
+    const cleanupJoinAttempt = () => {
+      clearTimeout(roomJoinTimeoutRef.current)
+      socket.off('connect', joinRoom)
+      socket.off('connect_error', handleConnectError)
+      socket.off('room-joined', handleRoomJoined)
+    }
+
+    const handleConnectError = (error) => {
       if (!active) return
+      cleanupJoinAttempt()
       sessionStorage.removeItem('blazechat_room')
       sessionStorage.removeItem('blazechat_name')
-      setRoomError('Could not connect to the server. Please try again.')
+      setRoomError(
+        error?.message || 'Could not connect to the server. Please try again.'
+      )
     }
 
     const handleRoomJoined = ({ members, messages, assignedName }) => {
       if (!active) return
-      socket.off('connect_error', handleConnectError)
+      cleanupJoinAttempt()
       if (assignedName && assignedName !== myName) {
         setMyName(assignedName)
         sessionStorage.setItem('blazechat_name', assignedName)
@@ -243,6 +254,12 @@ function Room() {
     sessionStorage.setItem('blazechat_room', code)
     sessionStorage.setItem('blazechat_name', myName)
 
+    roomJoinTimeoutRef.current = setTimeout(() => {
+      handleConnectError(
+        new Error('Timed out while joining the room. Please try again.')
+      )
+    }, SOCKET_EVENT_TIMEOUT_MS)
+
     if (socket.connected) {
       joinRoom()
     } else {
@@ -252,10 +269,9 @@ function Room() {
 
     return () => {
       active = false
+      clearTimeout(typingTimeoutRef.current)
+      cleanupJoinAttempt()
       window.removeEventListener('beforeunload', handleBeforeUnload)
-      socket.off('connect', joinRoom)
-      socket.off('connect_error', handleConnectError)
-      socket.off('room-joined', handleRoomJoined)
       socket.disconnect()
     }
   }, [code])
@@ -291,6 +307,7 @@ function Room() {
       setTypingUsers(prev => prev.filter(n => n !== name))
     },
     onRoomError: ({ message }) => {
+      clearTimeout(roomJoinTimeoutRef.current)
       sessionStorage.removeItem('blazechat_room')
       sessionStorage.removeItem('blazechat_name')
       setRoomError(message)

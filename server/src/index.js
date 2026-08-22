@@ -32,18 +32,31 @@ const allowedOrigins = [...DEFAULT_CLIENT_URLS, ...envClientUrls]
 
 function isAllowedOrigin(origin) {
   if (!origin) return true;
-  return allowedOrigins.includes(normalizeOrigin(origin));
+  const normalizedOrigin = normalizeOrigin(origin);
+
+  if (allowedOrigins.includes(normalizedOrigin)) {
+    return true;
+  }
+
+  // Allow Vercel preview deployments for this frontend project.
+  return /^https:\/\/blazechat-three-[a-z0-9-]+\.vercel\.app$/i.test(
+    normalizedOrigin
+  );
+}
+
+function corsOriginHandler(origin, callback) {
+  if (isAllowedOrigin(origin)) {
+    callback(null, true);
+    return;
+  }
+
+  console.warn(`Blocked origin: ${origin}`);
+  callback(null, false);
 }
 
 const io = new Server(server, {
   cors: {
-    origin: (origin, callback) => {
-      if (isAllowedOrigin(origin)) {
-        callback(null, true);
-        return;
-      }
-      callback(new Error("Not allowed by CORS"));
-    },
+    origin: corsOriginHandler,
     methods: ["GET", "POST"],
   },
   pingTimeout: 10000,
@@ -52,13 +65,7 @@ const io = new Server(server, {
 
 app.use(
   cors({
-    origin: (origin, callback) => {
-      if (isAllowedOrigin(origin)) {
-        callback(null, true);
-        return;
-      }
-      callback(new Error("Not allowed by CORS"));
-    },
+    origin: corsOriginHandler,
   })
 );
 

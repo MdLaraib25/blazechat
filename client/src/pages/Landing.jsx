@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTheme } from '../App'
 import RoomModal from '../components/RoomModal'
-import socket from '../socket'
+import socket, { SOCKET_EVENT_TIMEOUT_MS } from '../socket'
 
 /* ─────────────────────────────────────────
    ICON STYLES — defined first, used below
@@ -238,6 +238,9 @@ export default function Landing() {
   const [createdCode, setCreatedCode] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [createError, setCreateError] = useState('')
+
+  const createRoomTimeoutRef = useRef(null)
 
   // card tilt on scroll
   useEffect(() => {
@@ -251,21 +254,73 @@ export default function Landing() {
     return () => window.removeEventListener('scroll', handler)
   }, [])
 
+  useEffect(() => {
+    return () => {
+      clearTimeout(createRoomTimeoutRef.current)
+      socket.disconnect()
+    }
+  }, [])
+
   function handleCreateRoom() {
+    if (loading) return
+
+    setCreateError('')
     setLoading(true)
-    socket.connect()
-    socket.emit('create-room', {})
-    socket.once('room-created', ({ code }) => {
+
+    const emitCreateRoom = () => {
+      socket.emit('create-room', {})
+    }
+
+    const cleanupCreateRoomAttempt = () => {
+      clearTimeout(createRoomTimeoutRef.current)
+      socket.off('connect', emitCreateRoom)
+      socket.off('room-created', handleRoomCreated)
+      socket.off('connect_error', handleCreateRoomError)
+    }
+
+    const handleRoomCreated = ({ code }) => {
+      cleanupCreateRoomAttempt()
       setCreatedCode(code)
       setShowModal(true)
       setLoading(false)
-    })
+    }
+
+    const handleCreateRoomError = (error) => {
+      cleanupCreateRoomAttempt()
+      setLoading(false)
+      setCreateError(
+        error?.message || 'Could not create a room right now. Please try again.'
+      )
+      socket.disconnect()
+    }
+
+    createRoomTimeoutRef.current = setTimeout(() => {
+      handleCreateRoomError(
+        new Error('Timed out while creating the room. Please try again.')
+      )
+    }, SOCKET_EVENT_TIMEOUT_MS)
+
+    socket.once('room-created', handleRoomCreated)
+    socket.once('connect_error', handleCreateRoomError)
+
+    if (socket.connected) {
+      emitCreateRoom()
+      return
+    }
+
+    socket.once('connect', emitCreateRoom)
+    socket.connect()
   }
 
   function handleEnterRoom() {
     socket.disconnect()
     setShowModal(false)
     navigate(`/join/${createdCode}`)
+  }
+
+  function handleCloseModal() {
+    socket.disconnect()
+    setShowModal(false)
   }
 
   function handleJoin() {
@@ -465,6 +520,11 @@ export default function Landing() {
             {joinError && (
               <span style={{ fontSize: 12, color: 'var(--red)' }}>
                 Please enter a valid 6-character room code
+              </span>
+            )}
+            {createError && (
+              <span style={{ fontSize: 12, color: 'var(--red)' }}>
+                {createError}
               </span>
             )}
             <span style={{ fontSize: 12, color: 'var(--muted-2)' }}>
@@ -866,7 +926,7 @@ export default function Landing() {
       {showModal && (
         <RoomModal
           code={createdCode}
-          onClose={() => setShowModal(false)}
+          onClose={handleCloseModal}
           onEnter={handleEnterRoom}
         />
       )}
