@@ -14,7 +14,7 @@ const server = http.createServer(app);
 
 const DEFAULT_CLIENT_URLS = [
   "http://localhost:5173",
-  "https://blazechat-three.vercel.app/",
+  "https://blazechat-three.vercel.app",
 ];
 
 function normalizeOrigin(origin) {
